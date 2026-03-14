@@ -11,6 +11,7 @@ use commands::{
 use git_watcher::GitWatcherManager;
 use pty_manager::PtyManager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::webview::WebviewWindowBuilder;
 use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -31,6 +32,9 @@ pub fn run() {
             let handle = app.handle();
 
             // -- Shell menu --
+            let new_window = MenuItemBuilder::with_id("new_window", "New Window")
+                .accelerator("CmdOrCtrl+Shift+N")
+                .build(handle)?;
             let new_terminal = MenuItemBuilder::with_id("new_terminal", "New Terminal")
                 .accelerator("CmdOrCtrl+N")
                 .build(handle)?;
@@ -45,6 +49,7 @@ pub fn run() {
                 .build(handle)?;
 
             let shell_menu = SubmenuBuilder::new(handle, "Shell")
+                .item(&new_window)
                 .item(&new_terminal)
                 .item(&new_session)
                 .separator()
@@ -187,7 +192,25 @@ pub fn run() {
 
             // Handle menu events -> emit to frontend
             app.on_menu_event(move |app_handle, event| {
-                let _ = app_handle.emit("menu-event", event.id().0.as_str());
+                let id = event.id().0.as_str();
+                if id == "new_window" {
+                    let label = format!("main_{}", std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis());
+                    let url = app_handle.webview_windows()
+                        .values()
+                        .next()
+                        .and_then(|w| w.url().ok())
+                        .unwrap_or_else(|| "index.html".parse().unwrap());
+                    let _ = WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::External(url))
+                        .title("lumaterm")
+                        .inner_size(1200.0, 800.0)
+                        .min_inner_size(600.0, 400.0)
+                        .build();
+                    return;
+                }
+                let _ = app_handle.emit("menu-event", id);
             });
 
             Ok(())
