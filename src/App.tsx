@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -75,6 +75,9 @@ function GroupContent({
 }
 
 export function App() {
+  const [splashVisible, setSplashVisible] = useState(true);
+  const [splashFading, setSplashFading] = useState(false);
+
   const groups = useAppStore((s) => s.groups);
   const activeGroupId = useAppStore((s) => s.activeGroupId);
   const browserVisible = useAppStore((s) => s.browserVisible);
@@ -85,6 +88,12 @@ export function App() {
   const toggleSideMenu = useAppStore((s) => s.toggleSideMenu);
   const settingsVisible = useAppStore((s) => s.settingsVisible);
   const theme = useAppStore((s) => s.theme);
+
+  useEffect(() => {
+    const fadeTimer = setTimeout(() => setSplashFading(true), 800);
+    const removeTimer = setTimeout(() => setSplashVisible(false), 1200);
+    return () => { clearTimeout(fadeTimer); clearTimeout(removeTimer); };
+  }, []);
 
   useEffect(() => {
     invoke<string>("get_home_dir").then((dir) => {
@@ -278,6 +287,12 @@ export function App() {
       {browserVisible && <BrowserPanel />}
       {infoPanelVisible && <InfoPanel />}
       {settingsVisible && <Settings />}
+
+      {splashVisible && (
+        <div className={`splash-screen${splashFading ? " fade-out" : ""}`}>
+          <img src="/app-icon.png" alt="LumaShell" className="splash-logo" />
+        </div>
+      )}
     </div>
   );
 }
