@@ -29,16 +29,32 @@ Starts Vite on `localhost:1420` with HMR and launches the Tauri window.
 ## Production Build
 
 ```bash
-make build                # Current platform
-make build-mac            # macOS universal (ARM + Intel)
-make build-mac-arm        # macOS ARM64
-make build-mac-intel      # macOS x86_64
-make build-linux-x64      # Linux x86_64
-make build-linux-arm      # Linux ARM64
-make build-all            # All platforms
+make build    # Build for current platform
 ```
 
 Build output: `src-tauri/target/release/bundle/`
+
+## Release (GitHub Actions)
+
+Cross-platform builds (macOS ARM + Intel, Linux, Windows) run via GitHub Actions. Push a version tag to trigger:
+
+```bash
+make bump-patch           # Bump version (or bump-minor / bump-major)
+make release              # Commit, tag, push — triggers CI build
+```
+
+The workflow builds for all platforms, signs macOS bundles, and creates a draft GitHub Release with all artifacts attached.
+
+To set up macOS code signing, add these repository secrets:
+
+| Secret                       | Description                          |
+|------------------------------|--------------------------------------|
+| `APPLE_CERTIFICATE`          | Base64-encoded `.p12` certificate    |
+| `APPLE_CERTIFICATE_PASSWORD` | Password for the `.p12` file         |
+| `APPLE_SIGNING_IDENTITY`     | Certificate name in Keychain         |
+| `APPLE_ID`                   | Apple ID email                       |
+| `APPLE_PASSWORD`             | App-specific password                |
+| `APPLE_TEAM_ID`              | Apple Developer Team ID              |
 
 ## Project Structure
 
