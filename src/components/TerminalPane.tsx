@@ -111,7 +111,7 @@ export function TerminalPane({ paneId, groupId }: TerminalPaneProps) {
       const cols = term.cols;
       const rows = term.rows;
 
-      create(sessionCwd).then((ptyId) => {
+      create(sessionCwd, state.shellPath || undefined).then((ptyId) => {
         addPane(groupIdRef.current, paneId, ptyId);
         resize(cols, rows);
       });

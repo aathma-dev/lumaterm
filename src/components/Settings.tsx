@@ -1,6 +1,12 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../state/store";
 import { ThemeMode } from "../lib/theme";
+
+interface ShellInfo {
+  name: string;
+  path: string;
+}
 
 const FONT_OPTIONS = [
   { label: "SF Mono (default)", value: "'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace" },
@@ -73,7 +79,32 @@ export function Settings() {
   const setRestoreLines = useAppStore((s) => s.setRestoreLines);
   const showStatusBar = useAppStore((s) => s.showStatusBar);
   const setShowStatusBar = useAppStore((s) => s.setShowStatusBar);
+  const shellPath = useAppStore((s) => s.shellPath);
+  const setShellPath = useAppStore((s) => s.setShellPath);
   const setThemeMode = useAppStore((s) => s.setThemeMode);
+
+  const [availableShells, setAvailableShells] = useState<ShellInfo[]>([]);
+  const [defaultShell, setDefaultShell] = useState("");
+
+  useEffect(() => {
+    invoke<ShellInfo[]>("get_available_shells").then((shells) => {
+      // Deduplicate by shell name (e.g. /bin/zsh and /usr/bin/zsh)
+      const seen = new Set<string>();
+      const unique = shells.filter((s) => {
+        if (seen.has(s.name)) return false;
+        seen.add(s.name);
+        return true;
+      });
+      setAvailableShells(unique);
+
+      // If saved shell is no longer available, reset to default
+      const currentShell = useAppStore.getState().shellPath;
+      if (currentShell && !unique.some((s) => s.path === currentShell)) {
+        setShellPath("");
+      }
+    }).catch(() => {});
+    invoke<string>("get_default_shell").then(setDefaultShell).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -260,6 +291,33 @@ export function Settings() {
             padding: "4px 24px 24px",
           }}
         >
+          {/* ── Shell ── */}
+          <div style={groupLabelStyle}>Shell</div>
+          <div style={cardStyle}>
+            <div style={rowStyle}>
+              <div>
+                <div>Default Shell</div>
+                <div style={{ fontSize: 11, color: t.textMuted, marginTop: 2 }}>
+                  Used when opening new terminals
+                </div>
+              </div>
+              <select
+                value={shellPath}
+                onChange={(e) => setShellPath(e.target.value)}
+                style={selectStyle}
+              >
+                <option value="">
+                  System Default{defaultShell ? ` (${defaultShell.split(/[/\\]/).pop()})` : ""}
+                </option>
+                {availableShells.map((s) => (
+                  <option key={s.path} value={s.path}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {/* ── Font ── */}
           <div style={groupLabelStyle}>Font</div>
           <div style={cardStyle}>

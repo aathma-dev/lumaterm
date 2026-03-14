@@ -4,7 +4,8 @@ mod pty_manager;
 
 use commands::{
     detect_agents, docker_container_logs, docker_container_remove, docker_container_restart,
-    docker_container_stop, docker_image_remove, docker_info, get_default_shell, get_home_dir,
+    docker_container_stop, docker_image_remove, docker_info, get_available_shells,
+    get_default_shell, get_home_dir,
     git_info, git_status_short, git_unwatch, git_watch, k8s_info, pty_close, pty_create,
     pty_get_cwd, pty_resize, pty_write, set_window_theme, show_window, system_info,
 };
@@ -23,7 +24,7 @@ pub fn run() {
         .manage(GitWatcherManager::new())
         .invoke_handler(tauri::generate_handler![
             pty_create, pty_write, pty_resize, pty_close, pty_get_cwd, get_home_dir,
-            get_default_shell, git_status_short, git_info, git_watch, git_unwatch,
+            get_default_shell, get_available_shells, git_status_short, git_info, git_watch, git_unwatch,
             docker_info, docker_container_stop, docker_container_restart,
             docker_container_remove, docker_image_remove, docker_container_logs,
             k8s_info, system_info, detect_agents, set_window_theme, show_window

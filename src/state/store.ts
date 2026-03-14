@@ -41,6 +41,7 @@ interface AppState {
   scrollbackLimit: number;
   restoreLines: number;
   showStatusBar: boolean;
+  shellPath: string; // empty string = system default
 
   // Init
   setHomedir: (dir: string) => void;
@@ -110,6 +111,7 @@ interface AppState {
   setScrollbackLimit: (limit: number) => void;
   setRestoreLines: (lines: number) => void;
   setShowStatusBar: (show: boolean) => void;
+  setShellPath: (path: string) => void;
   setPaneFontSize: (groupId: string, paneId: string, size: number | null) => void;
 }
 
@@ -159,6 +161,7 @@ export const useAppStore = create<AppState>()(
       scrollbackLimit: 5000,
       restoreLines: 100,
       showStatusBar: true,
+      shellPath: "",
 
       setHomedir: (dir) => {
         set({ homedir: dir });
@@ -487,6 +490,7 @@ export const useAppStore = create<AppState>()(
       setRestoreLines: (lines) =>
         set({ restoreLines: Math.max(0, Math.min(10000, lines)) }),
       setShowStatusBar: (show) => set({ showStatusBar: show }),
+      setShellPath: (path) => set({ shellPath: path }),
       setPaneFontSize: (groupId, paneId, size) => {
         set((s) => {
           const group = s.groups[groupId];
@@ -544,6 +548,7 @@ export const useAppStore = create<AppState>()(
         scrollbackLimit: state.scrollbackLimit,
         restoreLines: state.restoreLines,
         showStatusBar: state.showStatusBar,
+        shellPath: state.shellPath,
       }),
     }
   )

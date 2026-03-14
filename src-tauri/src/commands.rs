@@ -19,8 +19,9 @@ pub fn pty_create(
     cols: u16,
     rows: u16,
     cwd: Option<String>,
+    shell: Option<String>,
 ) -> Result<u32, String> {
-    state.create(app, cols, rows, cwd)
+    state.create(app, cols, rows, cwd, shell)
 }
 
 #[tauri::command]
@@ -60,8 +61,132 @@ pub fn get_home_dir() -> Result<String, String> {
 
 #[tauri::command]
 pub fn get_default_shell() -> String {
-    std::env::var("SHELL")
-        .unwrap_or_else(|_| "unknown".to_string())
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Prefer PowerShell, fall back to cmd.exe
+        if which_exists("pwsh.exe") {
+            "pwsh.exe".to_string()
+        } else if which_exists("powershell.exe") {
+            "powershell.exe".to_string()
+        } else {
+            std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct ShellInfo {
+    pub name: String,
+    pub path: String,
+}
+
+#[tauri::command]
+pub fn get_available_shells() -> Vec<ShellInfo> {
+    let mut shells: Vec<ShellInfo> = Vec::new();
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Read /etc/shells — only include shells that actually exist on disk
+        if let Ok(content) = std::fs::read_to_string("/etc/shells") {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if !std::path::Path::new(line).exists() {
+                    continue;
+                }
+                let name = std::path::Path::new(line)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(line)
+                    .to_string();
+                shells.push(ShellInfo {
+                    name,
+                    path: line.to_string(),
+                });
+            }
+        }
+        // Ensure current $SHELL is in the list
+        if let Ok(current) = std::env::var("SHELL") {
+            if std::path::Path::new(&current).exists() && !shells.iter().any(|s| s.path == current) {
+                let name = std::path::Path::new(&current)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&current)
+                    .to_string();
+                shells.insert(0, ShellInfo { name, path: current });
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // PowerShell 7+ (cross-platform)
+        if let Some(path) = find_in_path("pwsh.exe") {
+            shells.push(ShellInfo { name: "PowerShell 7".to_string(), path });
+        }
+        // Windows PowerShell 5.x
+        if let Some(path) = find_in_path("powershell.exe") {
+            shells.push(ShellInfo { name: "Windows PowerShell".to_string(), path });
+        }
+        // CMD
+        if let Ok(comspec) = std::env::var("COMSPEC") {
+            shells.push(ShellInfo { name: "Command Prompt".to_string(), path: comspec });
+        } else {
+            shells.push(ShellInfo { name: "Command Prompt".to_string(), path: "cmd.exe".to_string() });
+        }
+        // Git Bash
+        let git_bash_paths = [
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+        ];
+        for gpath in &git_bash_paths {
+            if std::path::Path::new(gpath).exists() {
+                shells.push(ShellInfo { name: "Git Bash".to_string(), path: gpath.to_string() });
+                break;
+            }
+        }
+        // WSL
+        if let Some(path) = find_in_path("wsl.exe") {
+            shells.push(ShellInfo { name: "WSL".to_string(), path });
+        }
+    }
+
+    shells
+}
+
+#[cfg(target_os = "windows")]
+fn find_in_path(exe: &str) -> Option<String> {
+    std::process::Command::new("where")
+        .arg(exe)
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn which_exists(exe: &str) -> bool {
+    find_in_path(exe).is_some()
+}
+
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
+fn which_exists(_exe: &str) -> bool {
+    false
 }
 
 #[derive(Serialize)]

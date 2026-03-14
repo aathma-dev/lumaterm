@@ -41,6 +41,7 @@ impl PtyManager {
         cols: u16,
         rows: u16,
         cwd: Option<String>,
+        shell: Option<String>,
     ) -> Result<u32, String> {
         let pty_system = native_pty_system();
 
@@ -55,9 +56,34 @@ impl PtyManager {
             .openpty(size)
             .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-        let mut cmd = CommandBuilder::new(&shell);
-        cmd.arg("-l"); // Login shell: ensures profile/rc files are sourced (PATH, etc.)
+        let shell_path = shell.unwrap_or_else(|| {
+            #[cfg(not(target_os = "windows"))]
+            {
+                std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+            }
+            #[cfg(target_os = "windows")]
+            {
+                std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+            }
+        });
+
+        let mut cmd = CommandBuilder::new(&shell_path);
+
+        // Add login shell flag for Unix shells (not for cmd.exe or powershell)
+        #[cfg(not(target_os = "windows"))]
+        {
+            cmd.arg("-l");
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let lower = shell_path.to_lowercase();
+            if lower.contains("bash") {
+                cmd.arg("-l");
+            } else if lower.contains("pwsh") || lower.contains("powershell") {
+                cmd.arg("-NoLogo");
+            }
+        }
+
         cmd.env("TERM", "xterm-256color");
 
         // Set the working directory for the shell
@@ -164,18 +190,27 @@ impl PtyManager {
             .process_id()
             .ok_or_else(|| "No PID available".to_string())?;
 
-        // On macOS, use lsof to get the cwd of the process
-        let output = std::process::Command::new("lsof")
-            .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
-            .output()
-            .map_err(|e| format!("Failed to run lsof: {}", e))?;
+        #[cfg(not(target_os = "windows"))]
+        {
+            // On macOS/Linux, use lsof to get the cwd of the process
+            let output = std::process::Command::new("lsof")
+                .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+                .output()
+                .map_err(|e| format!("Failed to run lsof: {}", e))?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        stdout
-            .lines()
-            .find(|l| l.starts_with('n'))
-            .map(|l| l[1..].to_string())
-            .ok_or_else(|| "Could not determine cwd".to_string())
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            stdout
+                .lines()
+                .find(|l| l.starts_with('n'))
+                .map(|l| l[1..].to_string())
+                .ok_or_else(|| "Could not determine cwd".to_string())
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // On Windows, read /proc/{pid}/cwd isn't available; return an error
+            // The frontend tracks cwd via OSC sequences as a fallback
+            Err(format!("CWD detection not supported on Windows for PID {}", pid))
+        }
     }
 
     pub fn close(&self, pty_id: u32) -> Result<(), String> {

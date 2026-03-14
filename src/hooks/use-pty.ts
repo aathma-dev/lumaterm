@@ -17,8 +17,8 @@ export function usePty(
   const onDataRef = useRef(onData);
   onDataRef.current = onData;
 
-  const create = useCallback(async (cwd?: string) => {
-    const id = await invoke<number>("pty_create", { cols, rows, cwd: cwd || null });
+  const create = useCallback(async (cwd?: string, shell?: string) => {
+    const id = await invoke<number>("pty_create", { cols, rows, cwd: cwd || null, shell: shell || null });
     ptyIdRef.current = id;
 
     const unlisten = await listen<PtyOutput>("pty-output", (event) => {
