@@ -1,8 +1,8 @@
-# LumaShell
+# LumaTerm
 
 A modern terminal emulator built with Tauri 2, React 19, and xterm.js. Features multi-pane splits, git integration, Docker management, and an AI agents panel.
 
-![LumaShell Preview](preview/showcase-containers.png)
+![LumaTerm Preview](preview/showcase-containers.png)
 
 ## Prerequisites
 

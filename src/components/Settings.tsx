@@ -514,7 +514,7 @@ export function Settings() {
           </div>
           {/* ── Footer Logo ── */}
           <div style={{ display: "flex", justifyContent: "center", padding: "12px 0 4px" }}>
-            <img src="/app-icon.png" alt="LumaShell" style={{ width: 40, height: 40 }} />
+            <img src="/app-icon.png" alt="LumaTerm" style={{ width: 40, height: 40 }} />
           </div>
         </div>
       </div>

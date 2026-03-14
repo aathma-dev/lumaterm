@@ -290,7 +290,7 @@ export function App() {
 
       {splashVisible && (
         <div className={`splash-screen${splashFading ? " fade-out" : ""}`}>
-          <img src="/app-icon.png" alt="LumaShell" className="splash-logo" />
+          <img src="/app-icon.png" alt="LumaTerm" className="splash-logo" />
         </div>
       )}
     </div>
