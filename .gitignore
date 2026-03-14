@@ -1,0 +1,31 @@
+node_modules
+dist
+.claude
+CLAUDE.md
+
+# Build / Release
+dist-releases
+
+# Rust / Tauri
+src-tauri/target
+src-tauri/gen
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# Env
+.env
+.env.*
+
+# Logs
+*.log
+
+# Lock files (optional, remove if you want to track)
+bun.lock
