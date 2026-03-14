@@ -90,6 +90,9 @@ export function App() {
   const theme = useAppStore((s) => s.theme);
 
   useEffect(() => {
+    // Signal Rust to show the window once the frontend is mounted
+    invoke("show_window");
+
     const fadeTimer = setTimeout(() => setSplashFading(true), 800);
     const removeTimer = setTimeout(() => setSplashVisible(false), 1200);
     return () => { clearTimeout(fadeTimer); clearTimeout(removeTimer); };
@@ -119,12 +122,25 @@ export function App() {
           break;
         case "close_terminal":
           if (state.activePaneId) {
+            const pane = state.groups[state.activeGroupId]?.panes[state.activePaneId];
+            if (pane?.ptyId != null) {
+              invoke("pty_close", { ptyId: pane.ptyId });
+            }
             state.removePaneFromGroup(state.activeGroupId, state.activePaneId);
           }
           break;
-        case "close_session":
+        case "close_session": {
+          const closingGroup = state.groups[state.activeGroupId];
+          if (closingGroup) {
+            for (const p of Object.values(closingGroup.panes)) {
+              if (p.ptyId != null) {
+                invoke("pty_close", { ptyId: p.ptyId });
+              }
+            }
+          }
           state.removeGroup(state.activeGroupId);
           break;
+        }
         case "split_vertical":
           if (state.activePaneId) {
             state.splitPane(state.activePaneId, "vertical");

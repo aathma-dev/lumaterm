@@ -182,6 +182,7 @@ impl PtyManager {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(mut session) = sessions.remove(&pty_id) {
             let _ = session.child.kill();
+            let _ = session.child.wait();
         }
         Ok(())
     }
@@ -190,6 +191,7 @@ impl PtyManager {
         let mut sessions = self.sessions.lock().unwrap();
         for (_, mut session) in sessions.drain() {
             let _ = session.child.kill();
+            let _ = session.child.wait();
         }
     }
 }

@@ -50,14 +50,15 @@ export function usePty(
     });
   }, []);
 
-  const close = useCallback(async () => {
+  const close = useCallback(() => {
     if (unlistenRef.current) {
       unlistenRef.current();
       unlistenRef.current = null;
     }
     if (ptyIdRef.current !== null) {
-      await invoke("pty_close", { ptyId: ptyIdRef.current });
+      const id = ptyIdRef.current;
       ptyIdRef.current = null;
+      invoke("pty_close", { ptyId: id }).catch(() => {});
     }
   }, []);
 

@@ -6,7 +6,7 @@ use commands::{
     detect_agents, docker_container_logs, docker_container_remove, docker_container_restart,
     docker_container_stop, docker_image_remove, docker_info, get_default_shell, get_home_dir,
     git_info, git_status_short, git_unwatch, git_watch, k8s_info, pty_close, pty_create,
-    pty_get_cwd, pty_resize, pty_write, set_window_theme, system_info,
+    pty_get_cwd, pty_resize, pty_write, set_window_theme, show_window, system_info,
 };
 use git_watcher::GitWatcherManager;
 use pty_manager::PtyManager;
@@ -26,7 +26,7 @@ pub fn run() {
             get_default_shell, git_status_short, git_info, git_watch, git_unwatch,
             docker_info, docker_container_stop, docker_container_restart,
             docker_container_remove, docker_image_remove, docker_container_logs,
-            k8s_info, system_info, detect_agents, set_window_theme
+            k8s_info, system_info, detect_agents, set_window_theme, show_window
         ])
         .setup(|app| {
             let handle = app.handle();
@@ -207,6 +207,7 @@ pub fn run() {
                         .title("lumaterm")
                         .inner_size(1200.0, 800.0)
                         .min_inner_size(600.0, 400.0)
+                        .visible(false)
                         .build();
                     return;
                 }

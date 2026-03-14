@@ -2,10 +2,15 @@ use crate::git_watcher::GitWatcherManager;
 use crate::pty_manager::PtyManager;
 use serde::Serialize;
 use std::process::Command;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+
+#[tauri::command]
+pub fn show_window(window: WebviewWindow) {
+    let _ = window.show();
+}
 
 #[tauri::command]
 pub fn pty_create(
