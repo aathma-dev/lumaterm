@@ -1,7 +1,7 @@
 [package]
 name = "lumaterm"
 version = "1.5.0"
-description = "A Tauri App"
+description = "LumaTerm — a terminal for developers"
 authors = ["you"]
 edition = "2021"
 
@@ -22,6 +22,7 @@ base64 = "0.22"
 tauri-plugin-dialog = "2.6.0"
 notify = "7"
 notify-debouncer-mini = "0.5"
+tokio = { version = "1", features = ["process", "macros"] }
 
 [profile.release]
 opt-level = 3

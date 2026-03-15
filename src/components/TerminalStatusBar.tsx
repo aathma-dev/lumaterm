@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { Terminal } from "@xterm/xterm";
 import { useAppStore } from "../state/store";
 
@@ -78,6 +79,8 @@ export function TerminalStatusBar({
   const removePaneFromGroup = useAppStore((s) => s.removePaneFromGroup);
 
   const ptyId = useAppStore((s) => s.groups[groupId]?.panes[paneId]?.ptyId ?? null);
+  const activeGroupId = useAppStore((s) => s.activeGroupId);
+  const isSessionActive = groupId === activeGroupId;
   const isZoomed = zoomedPaneId === paneId;
   const [lineCount, setLineCount] = useState(0);
   const [hovered, setHovered] = useState(false);
@@ -85,8 +88,8 @@ export function TerminalStatusBar({
   const [gitBranch, setGitBranch] = useState("");
   const [gitChanges, setGitChanges] = useState(0);
   const [isGitRepo, setIsGitRepo] = useState(false);
-  const intervalRef = useRef<number | null>(null);
   const gitIntervalRef = useRef<number | null>(null);
+  const cwdRef = useRef<string>("");
 
   // Fetch default shell once
   useEffect(() => {
@@ -97,37 +100,58 @@ export function TerminalStatusBar({
     });
   }, []);
 
-  // Poll PTY cwd + git status
+  // Fetch CWD and start git watcher; 15s fallback poll for CWD changes
+  // Only poll when this pane's session is the active one
   useEffect(() => {
-    if (ptyId === null) return;
-    const fetchCwdAndGit = () => {
+    if (ptyId === null || !isSessionActive) return;
+    const fetchCwd = () => {
       invoke<string>("pty_get_cwd", { ptyId })
         .then((cwd) => {
-          return invoke<{ is_repo: boolean; branch: string; changes: number }>("git_status_short", { cwd });
+          if (cwd !== cwdRef.current) {
+            cwdRef.current = cwd;
+            invoke("git_watch", { cwd }).catch(() => {});
+            invoke<{ is_repo: boolean; branch: string; changes: number }>("git_status_short", { cwd })
+              .then((status) => {
+                setIsGitRepo(status.is_repo);
+                setGitBranch(status.branch);
+                setGitChanges(status.changes);
+              })
+              .catch(() => setIsGitRepo(false));
+          }
         })
-        .then((status) => {
-          setIsGitRepo(status.is_repo);
-          setGitBranch(status.branch);
-          setGitChanges(status.changes);
-        })
-        .catch(() => {
-          setIsGitRepo(false);
-        });
+        .catch(() => {});
     };
-    fetchCwdAndGit();
-    gitIntervalRef.current = window.setInterval(fetchCwdAndGit, 3000);
+    fetchCwd();
+    gitIntervalRef.current = window.setInterval(fetchCwd, 15000);
     return () => {
       if (gitIntervalRef.current) clearInterval(gitIntervalRef.current);
     };
-  }, [ptyId]);
+  }, [ptyId, isSessionActive]);
 
-  // Update line count periodically
+  // Listen for git status changes pushed from watcher
   useEffect(() => {
-    const update = () => {
-      const term = terminalRef.current;
-      if (!term) return;
+    const unlisten = listen<{ cwd: string; is_repo: boolean; branch: string; changes: number }>(
+      "git-status-changed",
+      (event) => {
+        if (event.payload.cwd === cwdRef.current) {
+          setIsGitRepo(event.payload.is_repo);
+          setGitBranch(event.payload.branch);
+          setGitChanges(event.payload.changes);
+        }
+      }
+    );
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  // Update line count on terminal write (debounced)
+  useEffect(() => {
+    const term = terminalRef.current;
+    if (!term) return;
+    let timeoutId: number | null = null;
+    const updateLineCount = () => {
       const buf = term.buffer.active;
-      // Count actual used lines: find last non-empty line
       let used = 0;
       for (let i = buf.length - 1; i >= 0; i--) {
         const line = buf.getLine(i);
@@ -138,10 +162,14 @@ export function TerminalStatusBar({
       }
       setLineCount(used);
     };
-    update();
-    intervalRef.current = window.setInterval(update, 800);
+    updateLineCount();
+    const disposable = term.onWriteParsed(() => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(updateLineCount, 300);
+    });
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      disposable.dispose();
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, [terminalRef]);
 

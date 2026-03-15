@@ -40,7 +40,6 @@ interface GitInfo {
   current_branch: string;
   branches: GitBranch[];
   tags: GitTag[];
-  log_graph: string[];
   commits: GitCommit[];
   files: GitFileStatus[];
   ahead: number;
@@ -234,6 +233,10 @@ export function GitPanelContent() {
   const themeMode = useAppStore((s) => s.themeMode);
   const systemDark = useAppStore((s) => s.systemDark);
   const t = useAppStore((s) => s.theme);
+  const infoPanelVisible = useAppStore((s) => s.infoPanelVisible);
+  const infoPanelTab = useAppStore((s) => s.infoPanelTab);
+  const gitPanelVisible = useAppStore((s) => s.gitPanelVisible);
+  const isPanelActive = (infoPanelVisible && infoPanelTab === "git") || gitPanelVisible;
 
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null);
   const [loading, setLoading] = useState(false);
@@ -246,29 +249,52 @@ export function GitPanelContent() {
 
   const isDark = themeMode === "dark" || (themeMode === "system" && systemDark);
   const cwd = groups[activeGroupId]?.cwd || "";
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
+  const lastFetchRef = useRef<number>(0);
+  const throttleTimerRef = useRef<number | null>(null);
 
   const fetchGitInfo = useCallback(() => {
     if (!cwd) { setGitInfo(null); return; }
+    const requestCwd = cwd;
     setLoading(true);
+    lastFetchRef.current = Date.now();
     invoke<GitInfo>("git_info", { cwd })
-      .then(setGitInfo)
-      .catch(() => setGitInfo(null))
+      .then((info) => { if (cwdRef.current === requestCwd) setGitInfo(info); })
+      .catch(() => { if (cwdRef.current === requestCwd) setGitInfo(null); })
       .finally(() => setLoading(false));
   }, [cwd]);
 
-  useEffect(() => { fetchGitInfo(); }, [fetchGitInfo]);
+  // Throttled fetch: at most once every 5s from watcher events
+  const fetchGitInfoThrottled = useCallback(() => {
+    const elapsed = Date.now() - lastFetchRef.current;
+    if (elapsed >= 5000) {
+      fetchGitInfo();
+    } else if (!throttleTimerRef.current) {
+      throttleTimerRef.current = window.setTimeout(() => {
+        throttleTimerRef.current = null;
+        fetchGitInfo();
+      }, 5000 - elapsed);
+    }
+  }, [fetchGitInfo]);
 
   useEffect(() => {
-    if (!cwd) return;
+    return () => { if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current); };
+  }, []);
+
+  useEffect(() => { if (isPanelActive) fetchGitInfo(); }, [fetchGitInfo, isPanelActive]);
+
+  useEffect(() => {
+    if (!cwd || !isPanelActive) return;
     invoke("git_watch", { cwd }).catch(() => {});
     const unlisten = listen<string>("git-changed", (event) => {
-      if (event.payload === cwd) fetchGitInfo();
+      if (event.payload === cwd) fetchGitInfoThrottled();
     });
     return () => {
       invoke("git_unwatch", { cwd }).catch(() => {});
       unlisten.then((fn) => fn());
     };
-  }, [cwd, fetchGitInfo]);
+  }, [cwd, fetchGitInfoThrottled, isPanelActive]);
 
   const toggleSection = useCallback((section: Section) => {
     setExpandedSections((prev) => {

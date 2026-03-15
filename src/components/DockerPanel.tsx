@@ -155,22 +155,31 @@ export function ContainerPanelContent() {
   const [logsLoadingMap, setLogsLoadingMap] = useState<Record<string, boolean>>({});
   const logsIntervalsRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
+  const infoPanelVisible = useAppStore((s) => s.infoPanelVisible);
+  const infoPanelTab = useAppStore((s) => s.infoPanelTab);
+  const dockerPanelVisible = useAppStore((s) => s.dockerPanelVisible);
+  const isPanelActive = (infoPanelVisible && infoPanelTab === "containers") || dockerPanelVisible;
+
   const cwd = groups[activeGroupId]?.cwd || "";
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
 
   const fetchDockerInfo = useCallback(() => {
     if (!cwd) { setDockerInfo(null); return; }
+    const requestCwd = cwd;
     setLoading(true);
     invoke<DockerInfo>("docker_info", { cwd })
-      .then(setDockerInfo)
-      .catch(() => setDockerInfo(null))
+      .then((info) => { if (cwdRef.current === requestCwd) setDockerInfo(info); })
+      .catch(() => { if (cwdRef.current === requestCwd) setDockerInfo(null); })
       .finally(() => setLoading(false));
   }, [cwd]);
 
   const fetchK8sInfo = useCallback(() => {
     if (!cwd) { setK8sInfo(null); return; }
+    const requestCwd = cwd;
     invoke<K8sInfo>("k8s_info", { cwd })
-      .then(setK8sInfo)
-      .catch(() => setK8sInfo(null));
+      .then((info) => { if (cwdRef.current === requestCwd) setK8sInfo(info); })
+      .catch(() => { if (cwdRef.current === requestCwd) setK8sInfo(null); });
   }, [cwd]);
 
   const fetchAll = useCallback(() => {
@@ -178,14 +187,14 @@ export function ContainerPanelContent() {
     fetchK8sInfo();
   }, [fetchDockerInfo, fetchK8sInfo]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { if (isPanelActive) fetchAll(); }, [fetchAll, isPanelActive]);
 
-  // Auto-refresh every 10 seconds
+  // Auto-refresh every 10 seconds, only when panel is visible
   useEffect(() => {
-    if (!cwd) return;
+    if (!cwd || !isPanelActive) return;
     const interval = setInterval(fetchAll, 10000);
     return () => clearInterval(interval);
-  }, [cwd, fetchAll]);
+  }, [cwd, fetchAll, isPanelActive]);
 
   const toggleSection = useCallback((section: Section) => {
     setExpandedSections((prev) => {

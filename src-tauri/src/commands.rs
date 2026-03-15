@@ -1,7 +1,9 @@
+use crate::git_cache::{GitStatus, GitStatusCache};
 use crate::git_watcher::GitWatcherManager;
 use crate::pty_manager::PtyManager;
 use serde::Serialize;
 use std::process::Command;
+use std::sync::OnceLock;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use base64::Engine;
@@ -59,15 +61,18 @@ pub fn get_home_dir() -> Result<String, String> {
         .map_err(|_| "Could not determine home directory".to_string())
 }
 
+static DEFAULT_SHELL: OnceLock<String> = OnceLock::new();
+static AVAILABLE_SHELLS: OnceLock<Vec<ShellInfo>> = OnceLock::new();
+
 #[tauri::command]
 pub fn get_default_shell() -> String {
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+    if let Some(cached) = DEFAULT_SHELL.get() {
+        return cached.clone();
     }
+    #[cfg(not(target_os = "windows"))]
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     #[cfg(target_os = "windows")]
-    {
-        // Prefer PowerShell, fall back to cmd.exe
+    let shell = {
         if which_exists("pwsh.exe") {
             "pwsh.exe".to_string()
         } else if which_exists("powershell.exe") {
@@ -75,10 +80,12 @@ pub fn get_default_shell() -> String {
         } else {
             std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
         }
-    }
+    };
+    let _ = DEFAULT_SHELL.set(shell.clone());
+    shell
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct ShellInfo {
     pub name: String,
     pub path: String,
@@ -86,6 +93,9 @@ pub struct ShellInfo {
 
 #[tauri::command]
 pub fn get_available_shells() -> Vec<ShellInfo> {
+    if let Some(cached) = AVAILABLE_SHELLS.get() {
+        return cached.clone();
+    }
     let mut shells: Vec<ShellInfo> = Vec::new();
 
     #[cfg(not(target_os = "windows"))]
@@ -157,6 +167,7 @@ pub fn get_available_shells() -> Vec<ShellInfo> {
         }
     }
 
+    let _ = AVAILABLE_SHELLS.set(shells.clone());
     shells
 }
 
@@ -187,13 +198,6 @@ fn which_exists(exe: &str) -> bool {
 #[allow(dead_code)]
 fn which_exists(_exe: &str) -> bool {
     false
-}
-
-#[derive(Serialize)]
-pub struct GitStatus {
-    pub is_repo: bool,
-    pub branch: String,
-    pub changes: u32,
 }
 
 #[derive(Serialize)]
@@ -237,14 +241,13 @@ pub struct GitInfo {
     pub current_branch: String,
     pub branches: Vec<GitBranch>,
     pub tags: Vec<GitTag>,
-    pub log_graph: Vec<String>,
     pub commits: Vec<GitCommit>,
     pub files: Vec<GitFileStatus>,
     pub ahead: u32,
     pub behind: u32,
 }
 
-fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
+pub fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
     Command::new("git")
         .args(args)
         .current_dir(cwd)
@@ -255,37 +258,64 @@ fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
+async fn run_git_async(cwd: &str, args: &[&str]) -> Option<String> {
+    tokio::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .env("PATH", enriched_path())
+        .output()
+        .await
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
 #[tauri::command]
-pub fn git_status_short(cwd: String) -> GitStatus {
-    let is_repo = run_git(&cwd, &["rev-parse", "--is-inside-work-tree"])
+pub async fn git_status_short(
+    cwd: String,
+    cache: State<'_, GitStatusCache>,
+) -> Result<GitStatus, String> {
+    if let Some(cached) = cache.get(&cwd) {
+        return Ok(cached);
+    }
+
+    let is_repo = run_git_async(&cwd, &["rev-parse", "--is-inside-work-tree"])
+        .await
         .map(|s| s == "true")
         .unwrap_or(false);
 
     if !is_repo {
-        return GitStatus {
+        let status = GitStatus {
             is_repo: false,
             branch: String::new(),
             changes: 0,
         };
+        cache.set(cwd, status.clone());
+        return Ok(status);
     }
 
-    let branch = run_git(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
+    let branch = run_git_async(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .await
         .unwrap_or_else(|| "HEAD".to_string());
 
-    let changes = run_git(&cwd, &["status", "--porcelain", "-u"])
+    let changes = run_git_async(&cwd, &["status", "--porcelain", "-u"])
+        .await
         .map(|s| s.lines().count() as u32)
         .unwrap_or(0);
 
-    GitStatus {
+    let status = GitStatus {
         is_repo: true,
         branch,
         changes,
-    }
+    };
+    cache.set(cwd, status.clone());
+    Ok(status)
 }
 
 #[tauri::command]
-pub fn git_info(cwd: String) -> GitInfo {
-    let is_repo = run_git(&cwd, &["rev-parse", "--is-inside-work-tree"])
+pub async fn git_info(cwd: String) -> GitInfo {
+    let is_repo = run_git_async(&cwd, &["rev-parse", "--is-inside-work-tree"])
+        .await
         .map(|s| s == "true")
         .unwrap_or(false);
 
@@ -295,7 +325,6 @@ pub fn git_info(cwd: String) -> GitInfo {
             current_branch: String::new(),
             branches: vec![],
             tags: vec![],
-            log_graph: vec![],
             commits: vec![],
             files: vec![],
             ahead: 0,
@@ -303,15 +332,35 @@ pub fn git_info(cwd: String) -> GitInfo {
         };
     }
 
-    // Current branch
-    let current_branch = run_git(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .unwrap_or_else(|| "HEAD".to_string());
+    // Run all independent git commands concurrently
+    let (
+        branch_out,
+        branches_out,
+        tags_out,
+        files_out,
+        ahead_behind_out,
+        commits_out,
+    ): (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = tokio::join!(
+        run_git_async(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        run_git_async(&cwd, &["branch", "-a", "--no-color"]),
+        run_git_async(&cwd, &[
+            "tag", "-l",
+            "--format=%(refname:short)%x00%(objectname:short)%x00%(objecttype)%x00%(taggername)%x00%(creatordate:relative)%x00%(contents:subject)",
+        ]),
+        run_git_async(&cwd, &["status", "--porcelain", "-u"]),
+        run_git_async(&cwd, &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]),
+        run_git_async(&cwd, &[
+            "log", "--all", "--max-count=200",
+            "--format=%H%x00%h%x00%s%x00%D%x00%P%x00%an%x00%cr",
+        ]),
+    );
 
-    // All branches
-    let branches = run_git(&cwd, &["branch", "-a", "--no-color"])
-        .unwrap_or_default()
+    let current_branch = branch_out.unwrap_or_else(|| "HEAD".to_string());
+
+    let branches_str = branches_out.unwrap_or_default();
+    let branches = branches_str
         .lines()
-        .filter_map(|line| {
+        .filter_map(|line: &str| {
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed.contains("->") {
                 return None;
@@ -331,62 +380,29 @@ pub fn git_info(cwd: String) -> GitInfo {
         })
         .collect();
 
-    // Tags
-    let tags = run_git(
-        &cwd,
-        &[
-            "tag",
-            "-l",
-            "--format=%(refname:short)%x00%(objectname:short)%x00%(objecttype)%x00%(taggername)%x00%(creatordate:relative)%x00%(contents:subject)",
-        ],
-    )
-    .unwrap_or_default()
-    .lines()
-    .filter_map(|line| {
-        let parts: Vec<&str> = line.split('\0').collect();
-        if parts.is_empty() || parts[0].is_empty() {
-            return None;
-        }
-        let name = parts[0].to_string();
-        let hash = parts.get(1).unwrap_or(&"").to_string();
-        let obj_type = parts.get(2).unwrap_or(&"commit");
-        let is_annotated = *obj_type == "tag";
-        let tagger = parts.get(3).unwrap_or(&"").to_string();
-        let date = parts.get(4).unwrap_or(&"").to_string();
-        let message = parts.get(5).unwrap_or(&"").to_string();
-        Some(GitTag {
-            name,
-            hash,
-            is_annotated,
-            tagger,
-            date,
-            message,
-        })
-    })
-    .collect();
-
-    // Git log graph
-    let log_graph = run_git(
-        &cwd,
-        &[
-            "log",
-            "--oneline",
-            "--graph",
-            "--all",
-            "--decorate",
-            "--color=never",
-        ],
-    )
-    .unwrap_or_default()
-    .lines()
-    .map(|l| l.to_string())
-    .collect();
-
-    // Status (staged + unstaged)
-    let files = run_git(&cwd, &["status", "--porcelain", "-u"])
-        .unwrap_or_default()
+    let tags_str = tags_out.unwrap_or_default();
+    let tags = tags_str
         .lines()
-        .filter_map(|line| {
+        .filter_map(|line: &str| {
+            let parts: Vec<&str> = line.split('\0').collect();
+            if parts.is_empty() || parts[0].is_empty() {
+                return None;
+            }
+            Some(GitTag {
+                name: parts[0].to_string(),
+                hash: parts.get(1).unwrap_or(&"").to_string(),
+                is_annotated: *parts.get(2).unwrap_or(&"commit") == "tag",
+                tagger: parts.get(3).unwrap_or(&"").to_string(),
+                date: parts.get(4).unwrap_or(&"").to_string(),
+                message: parts.get(5).unwrap_or(&"").to_string(),
+            })
+        })
+        .collect();
+
+    let files_str = files_out.unwrap_or_default();
+    let files = files_str
+        .lines()
+        .filter_map(|line: &str| {
             if line.len() < 3 {
                 return None;
             }
@@ -394,16 +410,13 @@ pub fn git_info(cwd: String) -> GitInfo {
             let work_status = &line[1..2];
             let path = line[3..].to_string();
 
-            // Determine display status and whether it's staged
             if index_status != " " && index_status != "?" {
-                // Has staged changes
                 Some(GitFileStatus {
                     path: path.clone(),
                     status: index_status.to_string(),
                     staged: true,
                 })
             } else if work_status != " " || index_status == "?" {
-                // Unstaged / untracked
                 let st = if index_status == "?" {
                     "??".to_string()
                 } else {
@@ -420,63 +433,50 @@ pub fn git_info(cwd: String) -> GitInfo {
         })
         .collect();
 
-    // Ahead / behind
-    let (ahead, behind) = run_git(
-        &cwd,
-        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
-    )
-    .map(|s| {
-        let parts: Vec<&str> = s.split('\t').collect();
-        let a = parts.first().and_then(|v| v.parse().ok()).unwrap_or(0u32);
-        let b = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0u32);
-        (a, b)
-    })
-    .unwrap_or((0, 0));
-
-    // Structured commits
-    let commits = run_git(
-        &cwd,
-        &[
-            "log",
-            "--all",
-            "--format=%H%x00%h%x00%s%x00%D%x00%P%x00%an%x00%cr",
-        ],
-    )
-    .unwrap_or_default()
-    .lines()
-    .filter_map(|line| {
-        let parts: Vec<&str> = line.split('\0').collect();
-        if parts.len() < 7 {
-            return None;
-        }
-        let refs: Vec<String> = parts[3]
-            .split(", ")
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect();
-        let parents: Vec<String> = parts[4]
-            .split(' ')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect();
-        Some(GitCommit {
-            hash: parts[0].to_string(),
-            short_hash: parts[1].to_string(),
-            message: parts[2].to_string(),
-            refs,
-            parents,
-            author: parts[5].to_string(),
-            time_ago: parts[6].to_string(),
+    let (ahead, behind) = ahead_behind_out
+        .map(|s: String| {
+            let parts: Vec<&str> = s.split('\t').collect();
+            let a = parts.first().and_then(|v: &&str| v.parse().ok()).unwrap_or(0u32);
+            let b = parts.get(1).and_then(|v: &&str| v.parse().ok()).unwrap_or(0u32);
+            (a, b)
         })
-    })
-    .collect();
+        .unwrap_or((0, 0));
+
+    let commits_str = commits_out.unwrap_or_default();
+    let commits = commits_str
+        .lines()
+        .filter_map(|line: &str| {
+            let parts: Vec<&str> = line.split('\0').collect();
+            if parts.len() < 7 {
+                return None;
+            }
+            let refs: Vec<String> = parts[3]
+                .split(", ")
+                .filter(|s: &&str| !s.is_empty())
+                .map(|s: &str| s.to_string())
+                .collect();
+            let parents: Vec<String> = parts[4]
+                .split(' ')
+                .filter(|s: &&str| !s.is_empty())
+                .map(|s: &str| s.to_string())
+                .collect();
+            Some(GitCommit {
+                hash: parts[0].to_string(),
+                short_hash: parts[1].to_string(),
+                message: parts[2].to_string(),
+                refs,
+                parents,
+                author: parts[5].to_string(),
+                time_ago: parts[6].to_string(),
+            })
+        })
+        .collect();
 
     GitInfo {
         is_repo: true,
         current_branch,
         branches,
         tags,
-        log_graph,
         commits,
         files,
         ahead,
@@ -540,7 +540,7 @@ pub struct DockerInfo {
 /// Build an enriched PATH that includes common install locations.
 /// macOS bundled apps inherit a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin),
 /// so tools like docker, git, kubectl, etc. won't be found without this.
-fn enriched_path() -> String {
+pub fn enriched_path() -> String {
     let base = std::env::var("PATH").unwrap_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
     let extras = [
@@ -680,7 +680,7 @@ fn find_files_walk(
 }
 
 #[tauri::command]
-pub fn docker_info(cwd: String) -> DockerInfo {
+pub async fn docker_info(cwd: String) -> DockerInfo {
     // Check if docker is available
     let available = run_cmd("docker", &["version", "--format", "{{.Server.Version}}"]).is_some();
 
@@ -1024,7 +1024,7 @@ pub struct SystemInfo {
 }
 
 #[tauri::command]
-pub fn system_info(cwd: String) -> SystemInfo {
+pub async fn system_info(cwd: String) -> SystemInfo {
     let cwd_path = std::path::Path::new(&cwd);
 
     // Folder entries
@@ -1882,7 +1882,7 @@ pub struct K8sInfo {
 }
 
 #[tauri::command]
-pub fn k8s_info(cwd: String) -> K8sInfo {
+pub async fn k8s_info(cwd: String) -> K8sInfo {
     let available = run_cmd("kubectl", &["version", "--client", "--short"]).is_some()
         || run_cmd("kubectl", &["version", "--client"]).is_some();
 

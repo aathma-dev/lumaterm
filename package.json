@@ -1,7 +1,7 @@
 {
   "name": "lumaterm",
   "version": "1.5.0",
-  "description": "Terminal emulator built with Tauri",
+  "description": "LumaTerm — a terminal for developers",
   "type": "module",
   "scripts": {
     "start": "vite",
