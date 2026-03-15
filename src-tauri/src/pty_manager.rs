@@ -207,9 +207,28 @@ impl PtyManager {
         }
         #[cfg(target_os = "windows")]
         {
-            // On Windows, read /proc/{pid}/cwd isn't available; return an error
-            // The frontend tracks cwd via OSC sequences as a fallback
-            Err(format!("CWD detection not supported on Windows for PID {}", pid))
+            // Try PowerShell Get-Process to get the working directory
+            let output = std::process::Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!(
+                        "(Get-Process -Id {} -ErrorAction SilentlyContinue).Path | Split-Path -Parent",
+                        pid
+                    ),
+                ])
+                .output();
+            match output {
+                Ok(o) if o.status.success() => {
+                    let cwd = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if !cwd.is_empty() {
+                        Ok(cwd)
+                    } else {
+                        Err(format!("CWD detection returned empty for PID {}", pid))
+                    }
+                }
+                _ => Err(format!("CWD detection not supported on Windows for PID {}", pid)),
+            }
         }
     }
 

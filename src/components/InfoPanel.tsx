@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useSyncExternalStore } from "react";
+import React, { useEffect, useState, useCallback, useRef, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../state/store";
 import { ResizeHandle } from "./ResizeHandle";
@@ -177,6 +177,9 @@ export function SystemView() {
   const groups = useAppStore((s) => s.groups);
   const activeGroupId = useAppStore((s) => s.activeGroupId);
   const t = useAppStore((s) => s.theme);
+  const infoPanelVisible = useAppStore((s) => s.infoPanelVisible);
+  const infoPanelTab = useAppStore((s) => s.infoPanelTab);
+  const isPanelActive = infoPanelVisible && infoPanelTab === "system";
 
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(false);
@@ -187,17 +190,20 @@ export function SystemView() {
   const [expandedPkgManager, setExpandedPkgManager] = useState<string | null>(null);
 
   const cwd = groups[activeGroupId]?.cwd || "";
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
 
   const fetchSystemInfo = useCallback(() => {
     if (!cwd) { setSysInfo(null); return; }
+    const requestCwd = cwd;
     setLoading(true);
     invoke<SystemInfo>("system_info", { cwd })
-      .then(setSysInfo)
-      .catch(() => setSysInfo(null))
+      .then((info) => { if (cwdRef.current === requestCwd) setSysInfo(info); })
+      .catch(() => { if (cwdRef.current === requestCwd) setSysInfo(null); })
       .finally(() => setLoading(false));
   }, [cwd]);
 
-  useEffect(() => { fetchSystemInfo(); }, [fetchSystemInfo]);
+  useEffect(() => { if (isPanelActive) fetchSystemInfo(); }, [fetchSystemInfo, isPanelActive]);
 
   const toggleSection = useCallback((section: SysSection) => {
     setExpandedSections((prev) => {

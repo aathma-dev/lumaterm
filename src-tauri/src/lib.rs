@@ -1,4 +1,5 @@
 mod commands;
+mod git_cache;
 mod git_watcher;
 mod pty_manager;
 
@@ -22,6 +23,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(PtyManager::new())
         .manage(GitWatcherManager::new())
+        .manage(git_cache::GitStatusCache::new(2))
         .invoke_handler(tauri::generate_handler![
             pty_create, pty_write, pty_resize, pty_close, pty_get_cwd, get_home_dir,
             get_default_shell, get_available_shells, git_status_short, git_info, git_watch, git_unwatch,
