@@ -56,6 +56,14 @@ To set up macOS code signing, add these repository secrets:
 | `APPLE_PASSWORD`             | App-specific password                |
 | `APPLE_TEAM_ID`              | Apple Developer Team ID              |
 
+## macOS — "App is damaged and can't be opened"
+
+If you see this error after downloading, remove the quarantine attribute:
+
+```bash
+xattr -cr /Applications/lumaterm.app
+```
+
 ## Project Structure
 
 ```
